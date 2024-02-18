@@ -1,0 +1,185 @@
+﻿@page "/"
+@using KanbanBlazorServer.Models
+@using KanbanBlazorServer.Components.Elements
+@using Microsoft.AspNetCore.Components
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.EntityFrameworkCore;
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject KanbanBlazorServer.Data.ApplicationDbContext _context
+
+<PageTitle>Home</PageTitle>
+
+<MudDropContainer T="KanbanTaskItem" @ref="_dropContainer" Items="@_tasks" ItemsSelector="@((item,column) => item.Status == column)" ItemDropped="TaskStatusUpdated" Class="d-flex flex-row">
+	<ChildContent>
+		@foreach (var item in _sections)
+		{
+			<MudPaper Elevation="0" Class="pa-4 ma-4 d-flex flex-column mud-background-gray rounded-lg">
+				<MudToolBar DisableGutters="true">
+					<MudText Typo="Typo.subtitle1"><b>@item.Name</b></MudText>
+					<MudSpacer />
+				</MudToolBar>
+				<MudDropZone T="KanbanTaskItem" Identifier="@item.Name" Class="mud-height-full" />
+				@if (item.NewTaskOpen)
+				{
+					<MudPaper Elevation="25" Class="pa-2 rounded-lg">
+						<MudTextField @bind-Value="item.NewTaskName" Placeholder="New Task" DisableUnderLine="true" Margin="Margin.Dense" Class="mx-2 mt-n2"></MudTextField>
+						<MudButton OnClick="@(() => AddTask(item))" Size="Size.Small" Color="Color.Primary" FullWidth="true">Add Task</MudButton>
+						<MudButton OnClick="@(() => CancelTask(item))" Size="Size.Small" Color="Color.Secondary" FullWidth="true">Cancel</MudButton>
+					</MudPaper>
+				}
+				else
+				{
+					<MudButton OnClick="@(() => item.NewTaskOpen = !item.NewTaskOpen)" StartIcon="@Icons.Material.Filled.Add" FullWidth="true" Class="rounded-lg py-2">Add Task</MudButton>
+				}
+			</MudPaper>
+		}
+	</ChildContent>
+	<ItemRenderer>
+		<MudPaper Elevation="25" Class="pa-4 rounded-lg my-3">
+			<div style="display: flex; justify-content: space-between; align-items: start;">
+				<div style="max-width: 300px; overflow-wrap: anywhere;">@context.Name</div>
+				<div style="display: flex; justify-content: end; align-items: center;">
+					<MudIconButton @onclick="@(e => OpenDialog(context))" Variant="Variant.Text" Color="Color.Primary" Icon="@Icons.Material.TwoTone.Edit" Size="Size.Medium"></MudIconButton>
+					<MudIconButton @onclick="@(e => DeleteTask(context, e))" Variant="Variant.Text" Color="Color.Error" Icon="@Icons.Material.TwoTone.Delete" Size="Size.Medium"></MudIconButton>
+				</div>
+			</div>
+		</MudPaper>
+	</ItemRenderer>
+</MudDropContainer>
+<CustomSnackbar @ref="CustomSnackbar" />
+
+@code {
+	CustomSnackbar CustomSnackbar = new CustomSnackbar { };
+	TaskData _returnedData = new TaskData();
+	private MudDropContainer<KanbanTaskItem> _dropContainer = new MudDropContainer<KanbanTaskItem>();
+	private async Task TaskStatusUpdated(MudItemDropInfo<KanbanTaskItem> info)
+	{
+		if (info.Item != null)
+		{
+			info.Item.Status = info.DropzoneIdentifier;
+
+			// Update the task in the database
+			var taskToUpdate = await _context.Data.FindAsync(info.Item.Id);
+			if (taskToUpdate != null)
+			{
+				taskToUpdate.Status = info.Item.Status;
+				_context.Data.Update(taskToUpdate);
+				await _context.SaveChangesAsync();
+			}
+		}
+	}
+	private List<KanBanSections> _sections = new()
+	{
+		new KanBanSections("To Do", false, String.Empty),
+		new KanBanSections("In Process", false, String.Empty),
+		new KanBanSections("Done", false, String.Empty),
+	};
+	public class KanBanSections
+	{
+		public string Name { get; set; }
+		public bool NewTaskOpen { get; set; }
+		public string NewTaskName { get; set; }
+
+		public KanBanSections(string name, bool newTaskOpen, string newTaskName)
+		{
+			Name = name;
+			NewTaskOpen = newTaskOpen;
+			NewTaskName = newTaskName;
+		}
+	}
+	public class KanbanTaskItem
+	{
+		public int Id { get; set; }
+		public string Name { get; set; }
+		public string Status { get; set; }
+
+		public KanbanTaskItem(int id, string name, string status)
+		{
+			Id = id;
+			Name = name;
+			Status = status;
+		}
+	}
+	private List<KanbanTaskItem> _tasks = new();
+	protected override async Task OnInitializedAsync()
+	{
+		var dataItems = await _context.Data.OrderBy(d => d.Name).ToListAsync();
+		_tasks = dataItems.Select(d => new KanbanTaskItem(d.Id, d.Name, d.Status)).ToList();
+	}
+	private async Task AddTask(KanBanSections section)
+	{
+		if (string.IsNullOrEmpty(section.NewTaskName))
+		{
+			CustomSnackbar.ShowMessage("Task name cannot be empty!", Severity.Error);
+			return;
+		}
+		var task = new TaskData { Name = section.NewTaskName, Status = section.Name };
+		_context.Data.Add(task);
+		await _context.SaveChangesAsync();
+		section.NewTaskName = string.Empty;
+		section.NewTaskOpen = false;
+		// Reload the data
+		var dataItems = await _context.Data.OrderBy(d => d.Name).ToListAsync();
+		_tasks = dataItems.Select(d => new KanbanTaskItem(d.Id, d.Name, d.Status)).ToList();
+		StateHasChanged();
+		_dropContainer.Refresh();
+	}
+
+	private async Task OpenDialog(KanbanTaskItem item)
+	{
+		DialogOptions dialogOptions = new DialogOptions() { CloseOnEscapeKey = true };
+		TaskData dataToPass = new() { Name = item.Name, Status = item.Status };
+		DialogParameters dialogParamters = new()
+		{
+			["PassedData"] = dataToPass
+		};
+		var dialog = await DialogService.ShowAsync<CustomDialog>("Custom Dialog", dialogParamters, dialogOptions);
+		var result = await dialog.Result;
+		if (!result.Canceled)
+		{
+			var returnedData = await dialog.GetReturnValueAsync<TaskData>();
+			_returnedData = returnedData;
+			if (string.IsNullOrEmpty(_returnedData.Name))
+			{
+				CustomSnackbar.ShowMessage("Task name cannot be empty!", Severity.Error);
+				return;
+			}
+			var updatedItem = new KanbanTaskItem(_returnedData.Id,_returnedData.Name, _returnedData.Status);
+			// Replace the old item with the updated one in your tasks collection
+			int taskIndex = _tasks.IndexOf(item);
+			if (taskIndex != -1)
+			{
+				_tasks[taskIndex] = updatedItem;
+			}
+			// Update the task in the database
+			var taskToUpdate = await _context.Data.FindAsync(item.Id);
+			if (taskToUpdate != null)
+			{
+				taskToUpdate.Name = updatedItem.Name;
+				taskToUpdate.Status = updatedItem.Status;
+				_context.Data.Update(taskToUpdate);
+			}
+			StateHasChanged();
+			_dropContainer.Refresh();
+		}
+	}
+	private async Task DeleteTask(KanbanTaskItem item, MouseEventArgs e)
+	{
+		// Remove the task from the tasks collection
+		_tasks.Remove(item);
+		// Delete the task from the database
+		var taskToDelete = await _context.Data.FindAsync(item.Id);
+		if (taskToDelete != null)
+		{
+			_context.Data.Remove(taskToDelete);
+			await _context.SaveChangesAsync();
+		}
+		StateHasChanged();
+		_dropContainer.Refresh();
+	}
+	void CancelTask(KanBanSections section)
+	{
+		section.NewTaskOpen = false;
+	}
+}

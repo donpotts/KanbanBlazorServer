@@ -1,0 +1,30 @@
+﻿@inject KanbanBlazorServer.Data.ApplicationDbContext _context
+
+@using KanbanBlazorServer.Models
+@using MudBlazor
+
+<MudDialog>
+    <DialogContent>
+        <MudForm Model="PassedData">
+            <MudTextField @bind-Value="PassedData.Name" MaxLength="50"></MudTextField>
+            <MudTextField @bind-Value="PassedData.Status" Variant="Variant.Text" ReadOnly="true" MaxLength="50" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Submit">Submit</MudButton>
+    </DialogActions>
+</MudDialog>
+
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = new MudDialogInstance {};
+    [Parameter]
+    public TaskData PassedData { get; set; } = new TaskData {};
+
+    void Submit() 
+    {
+        MudDialog.Close<TaskData>(PassedData);  
+    } 
+    void Cancel() => MudDialog.Cancel();
+}
